@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pangkalan Graph — Ojek Berau</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         margin: 0; background: #f4f1ea; color: #222; }
+  header { background: #14532d; color: #fff; padding: 20px 24px; }
+  header h1 { margin: 0; font-size: 26px; }
+  header p { margin: 6px 0 0; opacity: .9; }
+  main { max-width: 960px; margin: 0 auto; padding: 20px 16px 40px; }
+  section { background: #fff; border: 1px solid #ddd; border-radius: 12px;
+            padding: 18px 20px; margin-bottom: 18px; }
+  h2 { margin: 0 0 12px; font-size: 19px; color: #14532d; }
+  label { display: block; font-size: 14px; margin: 8px 0 4px; }
+  select, button { font-size: 15px; padding: 9px 12px; border-radius: 8px; }
+  select { border: 1px solid #bbb; background: #fff; min-width: 220px; }
+  button { background: #14532d; color: #fff; border: none; cursor: pointer;
+           margin-top: 12px; }
+  button.secondary { background: #666; }
+  button:hover { opacity: .9; }
+  .route { font-size: 18px; font-weight: 600; margin: 12px 0 4px; }
+  .meta { color: #444; }
+  .note { font-size: 13px; color: #666; margin-top: 10px; }
+  .error { color: #b91c1c; font-weight: 600; }
+  ol.queue { font-size: 17px; padding-left: 24px; }
+  ol.queue li:first-child { font-weight: 700; color: #14532d; }
+  .badge { display: inline-block; background: #dcfce7; color: #14532d;
+           font-size: 12px; font-weight: 700; border-radius: 999px;
+           padding: 2px 10px; margin-left: 8px; vertical-align: middle; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border-bottom: 1px solid #eee; text-align: left; padding: 8px 6px; }
+  th { color: #555; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+  footer { text-align: center; color: #777; font-size: 13px; padding-bottom: 24px; }
+  code { background: #eee; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛵 Pangkalan Graph</h1>
+  <p>Dispatch ojek Berau yang adil — rute termurah, antrean rotasi, riwayat trip.
+     Data rute nyata, graf disimpan di Neo4j Relate (<code>data/pangkalan.rl</code>).</p>
+</header>
+<main>
+  <section>
+    <h2>1. Cari rute termurah</h2>
+    <div class="grid">
+      <div>
+        <label for="from">Asal</label>
+        <select id="from"></select>
+        <label for="to">Tujuan</label>
+        <select id="to"></select>
+        <br><button id="btn-route">Cari rute termurah</button>
+      </div>
+      <div id="route-result"><p class="meta">Pilih asal &amp; tujuan, lalu cari.</p></div>
+    </div>
+    <p class="note">Rute termurah dihitung dengan Dijkstra (Python) di atas graf Relate —
+       karena <code>shortestPath()</code> Relate menghitung jumlah hop, bukan tarif.
+       Rute hop-terpendek ditampilkan sebagai pembanding.</p>
+  </section>
+
+  <section>
+    <h2>2. Antrean rotasi adil <span class="badge">giliran narik</span></h2>
+    <ol class="queue" id="queue-list"></ol>
+    <p class="meta" id="queue-next"></p>
+    <button id="btn-advance">✅ Selesai trip / giliran berikutnya</button>
+    <p class="note">Driver yang selesai narik pindah ke belakang antrean —
+       rantai <code>QUEUE_NEXT</code> di graf diperbarui.</p>
+  </section>
+
+  <section>
+    <h2>3. Catat trip baru</h2>
+    <div class="grid">
+      <div>
+        <label for="trip-driver">Driver</label>
+        <select id="trip-driver"></select>
+        <label for="trip-from">Asal</label>
+        <select id="trip-from"></select>
+        <label for="trip-to">Tujuan</label>
+        <select id="trip-to"></select>
+        <br><button id="btn-trip">Catat trip</button>
+      </div>
+      <div id="trip-result"><p class="meta">Trip tersimpan sebagai node
+        <code>(:Trip)</code> + <code>(:Driver)-[:TOOK]-&gt;(:Trip)</code>,
+        dan driver yang narik pindah ke belakang antrean.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Riwayat trip</h2>
+    <table>
+      <thead><tr><th>Driver</th><th>Rute</th><th>Jarak</th><th>Tarif</th><th>Waktu (UTC)</th></tr></thead>
+      <tbody id="trip-history"><tr><td colspan="5">Belum ada trip.</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Pangkalan &amp; tarif dasar</h2>
+    <p class="meta">Tarif Rp2.600/km (data rute asli Leo). 6 tempat, 8 rute dua arah:</p>
+    <table>
+      <thead><tr><th>Dari</th><th>Ke</th><th>Jarak</th><th>Tarif</th></tr></thead>
+      <tbody id="routes-table"></tbody>
+    </table>
+  </section>
+</main>
+<footer>Pangkalan Graph — Relate by Neo4j Hackathon · data rute asli Berau, Kalimantan Timur</footer>
+
+<script>
+const rp = n => "Rp" + Number(n).toLocaleString("id-ID");
+const places = [], drivers = [];
+
+async function loadMeta() {
+  const [pRes, dRes] = await Promise.all([fetch("/api/places"), fetch("/api/drivers")]);
+  const p = await pRes.json(), d = await dRes.json();
+  p.forEach(x => places.push(x.name));
+  d.forEach(x => drivers.push(x.name));
+  for (const id of ["from", "to", "trip-from", "trip-to"]) {
+    const sel = document.getElementById(id);
+    places.forEach(n => { const o = document.createElement("option"); o.value = o.textContent = n; sel.appendChild(o); });
+  }
+  const ds = document.getElementById("trip-driver");
+  drivers.forEach(n => { const o = document.createElement("option"); o.value = o.textContent = n; ds.appendChild(o); });
+  document.getElementById("to").selectedIndex = 4;        // Gunung Tabur
+  document.getElementById("trip-to").selectedIndex = 4;
+  // Tabel rute dasar (data seed, satu arah saja)
+  const all = [["Sambaliung","Bandara Kalimarau",12.5,32500],["Tanjung Redeb","Bandara Kalimarau",10.9,28500],
+    ["Sambaliung","Tanjung Redeb",5.5,14500],["Sambaliung","Pasar Sanggam",9.1,23500],
+    ["Tanjung Redeb","Pasar Sanggam",8.2,21000],["Tanjung Redeb","Gunung Tabur",33.5,87000],
+    ["Teluk Bayur","Bandara Kalimarau",27.5,71500],["Gunung Tabur","Bandara Kalimarau",30.5,79500]];
+  document.getElementById("routes-table").innerHTML =
+    all.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]} km</td><td>${rp(r[3])}</td></tr>`).join("");
+}
+
+async function loadQueue() {
+  const q = await (await fetch("/api/queue")).json();
+  document.getElementById("queue-list").innerHTML =
+    q.queue.map((n, i) => `<li>${n}${i === 0 ? ' <span class="badge">GILIRAN NARIK</span>' : ''}</li>`).join("");
+  document.getElementById("queue-next").textContent =
+    q.next ? `Giliran narik berikutnya: ${q.next}` : "Antrean kosong.";
+}
+
+async function loadTrips() {
+  const trips = await (await fetch("/api/trips")).json();
+  const tb = document.getElementById("trip-history");
+  tb.innerHTML = trips.length ? trips.map(t =>
+    `<tr><td>${t.driver}</td><td>${t.from} → ${t.to}</td><td>${t.distance_km} km</td><td>${rp(t.fare_rp)}</td><td>${t.created_at}</td></tr>`).join("")
+    : '<tr><td colspan="5">Belum ada trip.</td></tr>';
+}
+
+document.getElementById("btn-route").onclick = async () => {
+  const from = document.getElementById("from").value, to = document.getElementById("to").value;
+  const box = document.getElementById("route-result");
+  const res = await fetch(`/api/route?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+  const data = await res.json();
+  if (!res.ok) { box.innerHTML = `<p class="error">${data.error}</p>`; return; }
+  const c = data.cheapest, h = data.hop_shortest;
+  let html = `<div class="route">${c.route.join(" → ")}</div>
+    <p class="meta">${c.total_km} km · ${rp(c.total_fare_rp)} · ${c.hops} hop</p>`;
+  if (h && h.route.join("|") !== c.route.join("|")) {
+    html += `<p class="note">Pembanding hop-terpendek (shortestPath Cypher):
+      ${h.route.join(" → ")} — ${h.total_km} km · ${rp(h.total_fare_rp)} · ${h.hops} hop.
+      Lebih sedikit hop, tapi tarif lebih mahal.</p>`;
+  } else if (h) {
+    html += `<p class="note">Rute hop-terpendek sama dengan rute termurah.</p>`;
+  }
+  box.innerHTML = html;
+};
+
+document.getElementById("btn-advance").onclick = async () => {
+  const res = await fetch("/api/queue/advance", { method: "POST" });
+  const data = await res.json();
+  await loadQueue();
+  document.getElementById("queue-next").textContent =
+    `${data.moved} selesai narik, pindah ke belakang. Giliran berikutnya: ${data.next}`;
+};
+
+document.getElementById("btn-trip").onclick = async () => {
+  const driver = document.getElementById("trip-driver").value,
+        from = document.getElementById("trip-from").value,
+        to = document.getElementById("trip-to").value;
+  const box = document.getElementById("trip-result");
+  const res = await fetch("/api/trips", { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ driver, from, to }) });
+  const data = await res.json();
+  if (!res.ok) { box.innerHTML = `<p class="error">${data.error}</p>`; return; }
+  box.innerHTML = `<div class="route">${data.route.join(" → ")}</div>
+    <p class="meta">${data.driver}: ${data.total_km} km · ${rp(data.total_fare_rp)} · ${data.hops} hop — tersimpan.</p>`;
+  await loadQueue(); await loadTrips();
+};
+
+loadMeta().then(() => { loadQueue(); loadTrips(); });
+</script>
+</body>
+</html>
